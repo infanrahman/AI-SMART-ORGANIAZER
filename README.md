@@ -4,6 +4,13 @@ An intelligent, 100% private, local file organization system powered by **Ollama
 
 ---
 
+## 👤 Author & Ownership
+- **Developer & Owner:** **Infan Rahman**
+- **Email:** [infan@tegain.com](mailto:infan@tegain.com)
+- **GitHub:** [@infanrahman](https://github.com/infanrahman)
+
+---
+
 ## ✨ What's New in v2.0
 
 - **🔍 Deep Content Inspection:** The agent doesn't just read filenames anymore. It opens and reads the text inside `.pdf`, `.txt`, `.py`, `.json`, `.csv`, `.md`, `.log`, and `.html` files to understand what the document is actually about (e.g. distinguishing an Invoice from a Tax Form, Recipe, or Code project).
@@ -67,4 +74,5 @@ User Approval ────▶ Batch Move & Undo Log
 ---
 
 ## 📄 License
-MIT License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.  
+Copyright (c) 2026 **Infan Rahman** (`infan@tegain.com`). All rights reserved.

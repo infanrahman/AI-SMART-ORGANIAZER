@@ -1,3 +1,9 @@
+"""
+AI Smart Organizer (CLI Version)
+Owned and Developed by Infan Rahman (infan@tegain.com)
+GitHub: https://github.com/infanrahman/AI-SMART-ORGANIAZER
+"""
+
 import os
 import shutil
 import json

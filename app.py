@@ -1,3 +1,9 @@
+"""
+AI Smart Organizer v2.0
+Owned and Developed by Infan Rahman (infan@tegain.com)
+GitHub: https://github.com/infanrahman/AI-SMART-ORGANIAZER
+"""
+
 import os
 import shutil
 import json
@@ -249,9 +255,15 @@ class AdvancedOrganizerApp:
         self.log_text.config(yscrollcommand=log_scroll.set)
         log_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Bottom Clear Log Bar
+        # Bottom Clear Log Bar & Author Credit
         bottom_bar = ttk.Frame(main_frame)
         bottom_bar.pack(fill=tk.X, pady=(5, 0))
+        ttk.Label(
+            bottom_bar, 
+            text="Developed & Owned by Infan Rahman (infan@tegain.com)", 
+            font=("Segoe UI", 8), 
+            foreground="#888888"
+        ).pack(side=tk.LEFT)
         clear_btn = ttk.Button(bottom_bar, text="Clear Log", command=self._clear_log)
         clear_btn.pack(side=tk.RIGHT)
 
