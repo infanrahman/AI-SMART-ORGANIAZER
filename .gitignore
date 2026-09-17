@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# Environment and logs
+.env
+undo_history.json
+
+# Test folders
+messy_folder/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
