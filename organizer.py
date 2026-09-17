@@ -1,6 +1,6 @@
 """
 AI Smart Organizer (CLI Version)
-Owned and Developed by Infan Rahman (infan@tegain.com)
+Owned and Developed by Infan Rahman (infanarahman4@gmail.com)
 GitHub: https://github.com/infanrahman/AI-SMART-ORGANIAZER
 """
 

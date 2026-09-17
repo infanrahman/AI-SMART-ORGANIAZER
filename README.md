@@ -6,7 +6,7 @@ An intelligent, 100% private, local file organization system powered by **Ollama
 
 ## 👤 Author & Ownership
 - **Developer & Owner:** **Infan Rahman**
-- **Email:** [infan@tegain.com](mailto:infan@tegain.com)
+- **Email:** [infanarahman4@gmail.com](mailto:infanarahman4@gmail.com)
 - **GitHub:** [@infanrahman](https://github.com/infanrahman)
 
 ---
@@ -75,4 +75,4 @@ User Approval ────▶ Batch Move & Undo Log
 
 ## 📄 License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.  
-Copyright (c) 2026 **Infan Rahman** (`infan@tegain.com`). All rights reserved.
+Copyright (c) 2026 **Infan Rahman** (`infanarahman4@gmail.com`). All rights reserved.

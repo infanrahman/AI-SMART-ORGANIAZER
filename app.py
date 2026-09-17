@@ -1,6 +1,6 @@
 """
 AI Smart Organizer v2.0
-Owned and Developed by Infan Rahman (infan@tegain.com)
+Owned and Developed by Infan Rahman (infanarahman4@gmail.com)
 GitHub: https://github.com/infanrahman/AI-SMART-ORGANIAZER
 """
 
@@ -260,7 +260,7 @@ class AdvancedOrganizerApp:
         bottom_bar.pack(fill=tk.X, pady=(5, 0))
         ttk.Label(
             bottom_bar, 
-            text="Developed & Owned by Infan Rahman (infan@tegain.com)", 
+            text="Developed & Owned by Infan Rahman (infanarahman4@gmail.com)", 
             font=("Segoe UI", 8), 
             foreground="#888888"
         ).pack(side=tk.LEFT)
