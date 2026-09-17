@@ -3,28 +3,95 @@ import shutil
 import json
 import re
 import time
+import hashlib
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import ollama
 
+try:
+    import pypdf
+    PYPDF_AVAILABLE = True
+except ImportError:
+    PYPDF_AVAILABLE = False
+
 MODEL = "llama3.1"
 UNDO_FILE = "undo_history.json"
 
-class SmartOrganizerApp:
+# --- Content Inspection Helper ---
+def extract_file_snippet(file_path: str, max_chars: int = 350) -> str:
+    """Extracts a readable text preview from text documents, code, and PDFs."""
+    ext = os.path.splitext(file_path)[1].lower()
+    
+    # 1. PDF Documents
+    if ext == ".pdf":
+        if not PYPDF_AVAILABLE:
+            return "[PDF Document - content extraction unavailable]"
+        try:
+            reader = pypdf.PdfReader(file_path)
+            if len(reader.pages) > 0:
+                text = reader.pages[0].extract_text() or ""
+                clean_text = " ".join(text.split())
+                return clean_text[:max_chars] if clean_text else "[PDF with scanned image/no selectable text]"
+            return "[Empty PDF]"
+        except Exception as e:
+            return f"[PDF read error: {str(e)[:50]}]"
+
+    # 2. Text and Code files
+    text_exts = {
+        '.txt', '.md', '.py', '.js', '.ts', '.html', '.css', '.json',
+        '.csv', '.xml', '.log', '.sql', '.yaml', '.yml', '.ini', '.sh'
+    }
+    if ext in text_exts:
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read(max_chars)
+                clean_content = " ".join(content.split())
+                return clean_content if clean_content else "[Empty text file]"
+        except Exception as e:
+            return f"[Text read error: {str(e)[:50]}]"
+
+    # 3. Media & Binaries
+    if ext in {'.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico'}:
+        size_kb = os.path.getsize(file_path) // 1024
+        return f"[Image file - {size_kb} KB]"
+    if ext in {'.zip', '.rar', '.7z', '.tar', '.gz'}:
+        return "[Compressed Archive]"
+    if ext in {'.exe', '.msi', '.dmg', '.iso'}:
+        return "[Software Installer/Executable]"
+
+    return f"[Binary/Data file: {ext}]"
+
+def compute_sha256(file_path: str) -> str:
+    """Compute SHA-256 hash to detect duplicate files."""
+    try:
+        h = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            while chunk := f.read(65536):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return ""
+
+# --- Main Application GUI ---
+class AdvancedOrganizerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Local AI Smart Organizer & Auto-Cleaner")
-        self.root.geometry("820x640")
-        self.root.minsize(700, 520)
+        self.root.title("AI Smart Organizer v2.0 - Content-Aware & Auto-Cleaner")
+        self.root.geometry("900x700")
+        self.root.minsize(750, 560)
 
         # State variables
         self.target_dir = tk.StringVar(value=os.path.abspath("messy_folder"))
+        self.custom_prompt = tk.StringVar(value="")
         self.is_running = False
         self.watcher_enabled = tk.BooleanVar(value=False)
         self.watcher_interval = tk.IntVar(value=30)
         self.watcher_thread = None
         self.stop_watcher = threading.Event()
+
+        # Staged plan for approval
+        self.staged_plan = []  # List of {"file": ..., "category": ..., "reason": ...}
 
         self._build_ui()
         self._start_watcher_daemon()
@@ -32,7 +99,7 @@ class SmartOrganizerApp:
     def _build_ui(self):
         style = ttk.Style()
         style.theme_use("clam")
-        
+
         main_frame = ttk.Frame(self.root, padding="15")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -41,7 +108,7 @@ class SmartOrganizerApp:
         header_frame.pack(fill=tk.X, pady=(0, 10))
         ttk.Label(
             header_frame, 
-            text="🗂️ Local AI Smart Organizer", 
+            text="🧠 AI Smart Organizer v2.0", 
             font=("Segoe UI", 16, "bold")
         ).pack(side=tk.LEFT)
 
@@ -53,9 +120,9 @@ class SmartOrganizerApp:
         )
         self.status_badge.pack(side=tk.RIGHT, padx=5)
 
-        # 2. Folder Selection Section
-        folder_group = ttk.LabelFrame(main_frame, text=" 📂 Target Directory ", padding="10")
-        folder_group.pack(fill=tk.X, pady=(0, 10))
+        # 2. Target Directory Selection
+        folder_group = ttk.LabelFrame(main_frame, text=" 📂 Target Directory ", padding="8")
+        folder_group.pack(fill=tk.X, pady=(0, 8))
 
         folder_entry = ttk.Entry(folder_group, textvariable=self.target_dir, font=("Consolas", 10))
         folder_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
@@ -63,55 +130,112 @@ class SmartOrganizerApp:
         browse_btn = ttk.Button(folder_group, text="Browse...", command=self._browse_folder)
         browse_btn.pack(side=tk.RIGHT)
 
-        # 3. Action Buttons & Auto-Cleaner Controls
+        # 3. Custom Natural Language Instruction Box
+        prompt_group = ttk.LabelFrame(main_frame, text=" 💬 Custom AI Instructions (Optional) ", padding="8")
+        prompt_group.pack(fill=tk.X, pady=(0, 8))
+
+        prompt_entry = ttk.Entry(
+            prompt_group, 
+            textvariable=self.custom_prompt, 
+            font=("Segoe UI", 9)
+        )
+        prompt_entry.pack(fill=tk.X)
+        ttk.Label(
+            prompt_group, 
+            text="💡 Example: 'Put tax files in Taxes, recipes in Cooking, and group code projects by language.'", 
+            font=("Segoe UI", 8), 
+            foreground="#666666"
+        ).pack(anchor=tk.W, pady=(3, 0))
+
+        # 4. Action Buttons & Auto-Cleaner Controls
         controls_frame = ttk.Frame(main_frame)
         controls_frame.pack(fill=tk.X, pady=(0, 10))
 
         btn_frame = ttk.Frame(controls_frame)
         btn_frame.pack(side=tk.LEFT)
 
-        self.run_btn = ttk.Button(
+        self.preview_btn = ttk.Button(
             btn_frame, 
-            text="🚀 Organize Now", 
-            command=self.start_manual_organize
+            text="🔍 1. Preview Plan", 
+            command=self.start_preview_plan
         )
-        self.run_btn.pack(side=tk.LEFT, padx=(0, 6))
+        self.preview_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.execute_btn = ttk.Button(
+            btn_frame, 
+            text="✅ 2. Approve & Move", 
+            command=self.execute_staged_plan,
+            state=tk.DISABLED
+        )
+        self.execute_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.instant_btn = ttk.Button(
+            btn_frame, 
+            text="⚡ Instant Organize", 
+            command=self.start_instant_organize
+        )
+        self.instant_btn.pack(side=tk.LEFT, padx=(0, 5))
 
         self.undo_btn = ttk.Button(
             btn_frame, 
-            text="↩️ Undo Last Run", 
+            text="↩️ Undo Last", 
             command=self.undo_last_run
         )
-        self.undo_btn.pack(side=tk.LEFT, padx=(0, 6))
+        self.undo_btn.pack(side=tk.LEFT, padx=(0, 5))
 
-        watcher_frame = ttk.LabelFrame(controls_frame, text=" 🕒 Background Auto-Cleaner ", padding="5")
+        # Auto-Cleaner Daemon Settings
+        watcher_frame = ttk.LabelFrame(controls_frame, text=" 🕒 Auto-Cleaner ", padding="5")
         watcher_frame.pack(side=tk.RIGHT)
 
         self.watcher_chk = ttk.Checkbutton(
             watcher_frame, 
-            text="Enable Auto-Watch", 
+            text="Auto-Watch", 
             variable=self.watcher_enabled,
             command=self._on_watcher_toggle
         )
-        self.watcher_chk.pack(side=tk.LEFT, padx=5)
+        self.watcher_chk.pack(side=tk.LEFT, padx=3)
 
-        ttk.Label(watcher_frame, text="Every:").pack(side=tk.LEFT, padx=(5, 2))
+        ttk.Label(watcher_frame, text="Every:").pack(side=tk.LEFT)
         interval_spin = ttk.Spinbox(
             watcher_frame, 
             from_=5, 
             to=3600, 
             textvariable=self.watcher_interval, 
-            width=5
+            width=4
         )
-        interval_spin.pack(side=tk.LEFT)
-        ttk.Label(watcher_frame, text="sec").pack(side=tk.LEFT, padx=(2, 5))
+        interval_spin.pack(side=tk.LEFT, padx=2)
+        ttk.Label(watcher_frame, text="s").pack(side=tk.LEFT)
 
-        # 4. Activity Log Box
-        log_group = ttk.LabelFrame(main_frame, text=" 📜 Live Activity & Agent Reasoning ", padding="10")
-        log_group.pack(fill=tk.BOTH, expand=True)
+        # 5. Tabbed View: Plan Preview Table vs. Live Console Log
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+
+        # Tab 1: Plan Table
+        table_frame = ttk.Frame(self.notebook, padding="5")
+        self.notebook.add(table_frame, text=" 📋 Plan Preview Table ")
+
+        columns = ("file", "category", "reason")
+        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
+        self.tree.heading("file", text="File Name")
+        self.tree.heading("category", text="Proposed Category")
+        self.tree.heading("reason", text="Detected Content / Reasoning")
+
+        self.tree.column("file", width=220, anchor=tk.W)
+        self.tree.column("category", width=140, anchor=tk.W)
+        self.tree.column("reason", width=420, anchor=tk.W)
+
+        tree_scroll = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tree_scroll.set)
+
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Tab 2: Activity Log
+        log_frame = ttk.Frame(self.notebook, padding="5")
+        self.notebook.add(log_frame, text=" 📜 Live Activity Log ")
 
         self.log_text = tk.Text(
-            log_group, 
+            log_frame, 
             wrap=tk.WORD, 
             font=("Consolas", 9), 
             bg="#1e1e1e", 
@@ -121,23 +245,25 @@ class SmartOrganizerApp:
         )
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        scrollbar = ttk.Scrollbar(log_group, orient=tk.VERTICAL, command=self.log_text.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.log_text.config(yscrollcommand=scrollbar.set)
+        log_scroll = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
+        self.log_text.config(yscrollcommand=log_scroll.set)
+        log_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
+        # Bottom Clear Log Bar
         bottom_bar = ttk.Frame(main_frame)
-        bottom_bar.pack(fill=tk.X, pady=(6, 0))
+        bottom_bar.pack(fill=tk.X, pady=(5, 0))
         clear_btn = ttk.Button(bottom_bar, text="Clear Log", command=self._clear_log)
         clear_btn.pack(side=tk.RIGHT)
 
-        self.log("Ready. Select any folder and click 'Organize Now' or enable 'Auto-Watch'.")
+        self.log("AI Smart Organizer v2.0 ready. Supports Content Inspection and Custom Prompts.")
 
     # --- UI Helpers ---
     def _browse_folder(self):
         selected = filedialog.askdirectory(initialdir=self.target_dir.get())
         if selected:
             self.target_dir.set(os.path.abspath(selected))
-            self.log(f"Selected directory: {self.target_dir.get()}")
+            self.log(f"Target directory set to: {self.target_dir.get()}")
+            self._clear_plan_table()
 
     def log(self, message):
         timestamp = time.strftime("%H:%M:%S")
@@ -150,15 +276,21 @@ class SmartOrganizerApp:
     def _clear_log(self):
         self.log_text.delete(1.0, tk.END)
 
+    def _clear_plan_table(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self.staged_plan = []
+        self.execute_btn.config(state=tk.DISABLED)
+
     def set_status(self, text, color):
         self.root.after(0, lambda: self.status_badge.config(text=text, foreground=color))
 
-    # --- Option C: Background Watcher ---
+    # --- Background Auto-Cleaner ---
     def _on_watcher_toggle(self):
         if self.watcher_enabled.get():
             sec = self.watcher_interval.get()
             self.set_status(f"🟢 Watching ({sec}s)", "#2e7d32")
-            self.log(f"🕒 Auto-Cleaner enabled for '{self.target_dir.get()}' (check every {sec}s).")
+            self.log(f"🕒 Auto-Cleaner activated for '{self.target_dir.get()}' (every {sec}s).")
         else:
             self.set_status("⚪ Idle", "#666666")
             self.log("⏸️ Auto-Cleaner paused.")
@@ -182,11 +314,10 @@ class SmartOrganizerApp:
                     if os.path.exists(target):
                         loose_files = self._get_loose_files(target)
                         if loose_files:
-                            self.log(f"🕒 [Auto-Cleaner] Found {len(loose_files)} loose file(s). Auto-organizing...")
-                            self._run_agent_thread()
+                            self.log(f"🕒 [Auto-Cleaner] Found {len(loose_files)} loose files. Auto-organizing...")
+                            self._run_agent_thread(auto_execute=True)
 
     def _get_loose_files(self, directory):
-        """Returns safe list of loose files, ignoring system/temp files."""
         if not os.path.isdir(directory):
             return []
         ignored_exts = ('.tmp', '.crdownload', '.part', '.ini', '.lnk')
@@ -200,22 +331,37 @@ class SmartOrganizerApp:
         except Exception:
             return []
 
-    # --- Option A: Manual Organize ---
-    def start_manual_organize(self):
+    # --- Action Triggers ---
+    def start_preview_plan(self):
+        """Analyze files & content to create a plan for user review (Dry-run)."""
         if self.is_running:
-            messagebox.showinfo("Busy", "Organizer is already running!")
+            messagebox.showinfo("Busy", "Agent is currently busy.")
             return
-        self._run_agent_thread()
+        self._run_agent_thread(auto_execute=False)
 
-    def _run_agent_thread(self):
+    def start_instant_organize(self):
+        """Analyze files & content and move them immediately."""
+        if self.is_running:
+            messagebox.showinfo("Busy", "Agent is currently busy.")
+            return
+        self._run_agent_thread(auto_execute=True)
+
+    def _run_agent_thread(self, auto_execute: bool):
         self.is_running = True
-        self.run_btn.config(state=tk.DISABLED)
-        self.set_status("🤖 AI Organizing...", "#1565c0")
-        thread = threading.Thread(target=self._agent_worker, daemon=True)
+        self.preview_btn.config(state=tk.DISABLED)
+        self.instant_btn.config(state=tk.DISABLED)
+        self.execute_btn.config(state=tk.DISABLED)
+        self.set_status("🤖 AI Analyzing...", "#1565c0")
+        
+        thread = threading.Thread(
+            target=self._agent_worker, 
+            args=(auto_execute,), 
+            daemon=True
+        )
         thread.start()
 
-    # --- High-Performance Agent Engine ---
-    def _agent_worker(self):
+    # --- Content-Aware AI Engine ---
+    def _agent_worker(self, auto_execute: bool):
         target = self.target_dir.get()
         if not os.path.isdir(target):
             self.log(f"❌ Folder not found: {target}")
@@ -228,82 +374,63 @@ class SmartOrganizerApp:
             self._finish_agent_run()
             return
 
-        self.log(f"📋 Found {len(loose_files)} loose file(s) to organize in '{target}'.")
-        self.log(f"🚀 Sending file list to {MODEL} for batch categorization...")
+        self.log(f"🔍 Reading content snippets from {len(loose_files)} file(s)...")
 
-        moves_recorded = []
+        # Extract content previews for the LLM
+        file_dossiers = []
+        for fname in loose_files:
+            full_path = os.path.join(target, fname)
+            snippet = extract_file_snippet(full_path)
+            file_dossiers.append({
+                "filename": fname,
+                "content_preview": snippet
+            })
 
-        # Tool 1: High-efficiency batch move tool
-        def organize_category(category_name: str, files: list) -> str:
-            """Creates a category folder and moves the specified list of files into it.
+        self.log(f"🧠 Prompting {MODEL} with file content and custom rules...")
+
+        # Structured planning tool
+        staged_results = []
+
+        def propose_organization_plan(categories: list) -> str:
+            """Proposes categories and file assignments based on content analysis.
             
             Args:
-                category_name: The destination category (e.g. 'Documents', 'Images', 'Installers', 'Archives', 'Code').
-                files: List of file names to move into this category folder.
+                categories: A list of category objects, each containing:
+                            'category_name' (str) - Name of the category folder
+                            'files' (list[str]) - List of file names in this category
+                            'reason' (str) - Brief explanation of why these files belong here
             """
-            clean_cat = os.path.basename(str(category_name).strip('/\\'))
-            cat_dir = os.path.join(target, clean_cat)
-            os.makedirs(cat_dir, exist_ok=True)
-            
-            if isinstance(files, str):
-                files = [f.strip() for f in files.split(",") if f.strip()]
-            elif not isinstance(files, list):
-                files = [str(files)]
+            for cat_entry in categories:
+                cat_name = os.path.basename(str(cat_entry.get("category_name", "General")).strip('/\\'))
+                f_list = cat_entry.get("files", [])
+                reason = cat_entry.get("reason", "Content match")
+                if isinstance(f_list, str): f_list = [f_list]
 
-            moved = 0
-            for fname in files:
-                clean_f = os.path.basename(str(fname).strip('/\\'))
-                src = os.path.join(target, clean_f)
-                dst = os.path.join(cat_dir, clean_f)
-                if os.path.exists(src) and not os.path.isdir(src):
-                    try:
-                        shutil.move(src, dst)
-                        moves_recorded.append({"src": src, "dst": dst, "file": clean_f, "folder": clean_cat})
-                        moved += 1
-                    except Exception as ex:
-                        self.log(f"   ⚠️ Could not move '{clean_f}': {ex}")
+                for f in f_list:
+                    clean_f = os.path.basename(str(f).strip('/\\'))
+                    staged_results.append({
+                        "file": clean_f,
+                        "category": cat_name,
+                        "reason": reason
+                    })
+            return f"Received plan for {len(staged_results)} files."
 
-            self.log(f"📦 [Batch Action] Sorted {moved} file(s) into '{clean_cat}/'")
-            return f"Success: Moved {moved} files into '{clean_cat}/'"
-
-        # Tool 2: Single file move fallback
-        def move_file(file_name: str, folder_name: str) -> str:
-            """Moves a single file into a folder."""
-            clean_folder = os.path.basename(str(folder_name).strip('/\\'))
-            clean_file = os.path.basename(str(file_name).strip('/\\'))
-            src = os.path.join(target, clean_file)
-            dst = os.path.join(target, clean_folder, clean_file)
-            os.makedirs(os.path.join(target, clean_folder), exist_ok=True)
-            try:
-                if os.path.exists(src):
-                    shutil.move(src, dst)
-                    moves_recorded.append({"src": src, "dst": dst, "file": clean_file, "folder": clean_folder})
-                    self.log(f"🚚 [Agent Action] Moved '{clean_file}' -> '{clean_folder}/'")
-                    return f"Success: Moved {clean_file}"
-                return f"File not found: {clean_file}"
-            except Exception as e:
-                return f"Error: {str(e)}"
-
-        tools_list = [organize_category, move_file]
+        custom_rules = self.custom_prompt.get().strip()
+        custom_rule_text = f"\nUser Custom Rules: '{custom_rules}'\n" if custom_rules else ""
 
         system_prompt = (
-            "You are an expert file organizer.\n"
-            "Your goal is to organize all files provided by the user into logical category folders.\n"
-            "Categories to consider:\n"
-            "- Documents (pdf, docx, txt, xlsx, pptx, csv)\n"
-            "- Images (png, jpg, jpeg, gif, svg, webp)\n"
-            "- Installers (exe, msi, dmg, iso)\n"
-            "- Archives (zip, rar, 7z, tar, gz)\n"
-            "- Code (py, js, html, css, cpp, json)\n"
-            "- Audio & Video (mp3, wav, mp4, mkv)\n\n"
-            "INSTRUCTION: Use the 'organize_category' tool to organize files in batches. "
-            "Group every single file from the list into its appropriate category."
+            "You are an expert content-aware file organizer.\n"
+            "You will be given a list of files along with their extracted text content previews.\n"
+            "Analyze the text inside each file and categorize them into logical folders.\n"
+            f"{custom_rule_text}\n"
+            "Common categories: Documents, Invoices, Financial, Code, Personal, Recipes, Images, Archives, Installers.\n"
+            "INSTRUCTION: Call 'propose_organization_plan' with the list of categories, files, and brief reasons."
         )
 
         user_prompt = (
-            f"Here are the {len(loose_files)} loose files to organize:\n"
-            f"{json.dumps(loose_files, indent=2)}\n\n"
-            "Please call 'organize_category' for each category to group and move all these files now."
+            f"Here are the {len(file_dossiers)} files with their content previews:\n"
+            f"{json.dumps(file_dossiers, indent=2)}\n\n"
+            "Call 'propose_organization_plan' to categorize all these files."
         )
 
         messages = [
@@ -311,98 +438,129 @@ class SmartOrganizerApp:
             {"role": "user", "content": user_prompt}
         ]
 
-        turns = 0
-        max_turns = 10
-
-        while turns < max_turns:
-            turns += 1
-            self.log("🤔 Agent is analyzing and sorting...")
-            try:
-                response = ollama.chat(
-                    model=MODEL,
-                    messages=messages,
-                    tools=tools_list
-                )
-            except Exception as e:
-                self.log(f"❌ Ollama connection error: {str(e)}")
-                break
-
+        try:
+            response = ollama.chat(
+                model=MODEL,
+                messages=messages,
+                tools=[propose_organization_plan]
+            )
             message = response.get("message", {})
-            messages.append(message)
+            tool_calls = message.get("tool_calls") or []
 
-            tool_calls = message.get("tool_calls")
-            if not tool_calls:
-                fallback = self._extract_fallback_tool_calls(message.get("content", ""))
-                if fallback:
-                    tool_calls = fallback
+            # If tool calls are present, execute the planning tool
+            for tc in tool_calls:
+                args = tc.get("function", {}).get("arguments", {})
+                cats = args.get("categories") or args.get("plan") or []
+                if isinstance(cats, list):
+                    propose_organization_plan(cats)
 
-            if not tool_calls:
-                self.log(f"✅ Agent Finished: {message.get('content', 'All files processed.')}")
-                break
+            # Fallback JSON extractor if model printed JSON into chat text
+            if not staged_results:
+                raw_text = message.get("content", "")
+                staged_results = self._extract_fallback_plan(raw_text, loose_files)
 
-            for tool_call in tool_calls:
-                t_name = tool_call["function"]["name"]
-                args = tool_call["function"]["arguments"]
+        except Exception as e:
+            self.log(f"❌ Ollama Error: {str(e)}")
 
-                result = ""
-                try:
-                    if t_name == "organize_category":
-                        cat = (
-                            args.get('category_name') 
-                            or args.get('folder_name') 
-                            or args.get('category') 
-                            or args.get('name')
-                        )
-                        f_list = (
-                            args.get('files') 
-                            or args.get('file_names') 
-                            or args.get('file_list') 
-                            or []
-                        )
-                        if cat:
-                            result = organize_category(cat, f_list)
-                        else:
-                            result = "Error: missing category_name"
-
-                    elif t_name == "move_file":
-                        f_name = args.get('file_name') or args.get('filename') or args.get('file')
-                        d_name = args.get('folder_name') or args.get('destination_path') or args.get('destination')
-                        if f_name and d_name:
-                            result = move_file(f_name, d_name)
-                        else:
-                            result = f"Error: missing args in {args}"
-                    else:
-                        result = f"Tool {t_name} not found"
-                except Exception as ex:
-                    result = f"Error: {str(ex)}"
-
-                messages.append({
-                    "role": "tool",
-                    "content": str(result),
-                    "name": t_name
+        # Fallback: if AI missed any files, place them in a default category
+        handled_files = {item["file"] for item in staged_results}
+        for f in loose_files:
+            if f not in handled_files:
+                ext = os.path.splitext(f)[1].upper().replace('.', '') or 'Other'
+                staged_results.append({
+                    "file": f,
+                    "category": f"{ext}_Files",
+                    "reason": "Categorized by extension fallback"
                 })
 
-        if moves_recorded:
-            self._save_undo_history(moves_recorded)
-            self.log(f"💾 Completed! Successfully moved {len(moves_recorded)} file(s). Saved to Undo history.")
+        self.staged_plan = staged_results
+
+        # Update GUI Table
+        self.root.after(0, self._populate_plan_table, staged_results)
+
+        if auto_execute:
+            self.log("⚡ Auto-Executing organization plan...")
+            self._execute_moves(staged_results, target)
         else:
-            self.log("ℹ️ No files were moved.")
+            self.log(f"📋 Generated plan for {len(staged_results)} files. Review in table and click 'Approve & Move'.")
+            self.root.after(0, lambda: self.notebook.select(0)) # Switch to Table tab
 
         self._finish_agent_run()
 
-    def _extract_fallback_tool_calls(self, content):
-        if not content: return []
-        calls = []
-        for match in re.finditer(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', content):
-            snippet = match.group(0)
-            try:
-                data = json.loads(snippet)
-                if isinstance(data, dict) and "name" in data:
-                    args = data.get("parameters") or data.get("arguments") or {}
-                    calls.append({"function": {"name": data["name"], "arguments": args}})
-            except Exception:
-                continue
-        return calls
+    def _extract_fallback_plan(self, text, all_files):
+        """Extract plan if model outputted raw JSON into chat."""
+        plan = []
+        try:
+            for match in re.finditer(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text):
+                data = json.loads(match.group(0))
+                if "category_name" in data and "files" in data:
+                    cat = data["category_name"]
+                    files = data.get("files", [])
+                    reason = data.get("reason", "Extracted from content")
+                    if isinstance(files, str): files = [files]
+                    for f in files:
+                        plan.append({"file": f, "category": cat, "reason": reason})
+        except Exception:
+            pass
+        return plan
+
+    def _populate_plan_table(self, plan):
+        self._clear_plan_table()
+        self.staged_plan = plan
+        for item in plan:
+            self.tree.insert("", tk.END, values=(item["file"], item["category"], item["reason"]))
+        if plan:
+            self.execute_btn.config(state=tk.NORMAL)
+
+    # --- Plan Execution ---
+    def execute_staged_plan(self):
+        if not self.staged_plan:
+            messagebox.showinfo("Empty", "No staged plan to execute. Click 'Preview Plan' first.")
+            return
+
+        target = self.target_dir.get()
+        self.execute_btn.config(state=tk.DISABLED)
+        self.log(f"🚀 Executing plan for {len(self.staged_plan)} file(s)...")
+
+        threading.Thread(
+            target=self._execute_moves, 
+            args=(self.staged_plan, target), 
+            daemon=True
+        ).start()
+
+    def _execute_moves(self, plan, target):
+        moves_recorded = []
+        moved_count = 0
+
+        for item in plan:
+            fname = item["file"]
+            cat_name = os.path.basename(item["category"].strip('/\\'))
+            src = os.path.join(target, fname)
+            cat_dir = os.path.join(target, cat_name)
+            dst = os.path.join(cat_dir, fname)
+
+            if os.path.exists(src) and not os.path.isdir(src):
+                try:
+                    os.makedirs(cat_dir, exist_ok=True)
+                    shutil.move(src, dst)
+                    moves_recorded.append({
+                        "src": src, 
+                        "dst": dst, 
+                        "file": fname, 
+                        "folder": cat_name
+                    })
+                    moved_count += 1
+                    self.log(f"🚚 Moved '{fname}' -> '{cat_name}/'")
+                except Exception as ex:
+                    self.log(f"   ⚠️ Error moving '{fname}': {ex}")
+
+        if moves_recorded:
+            self._save_undo_history(moves_recorded)
+            self.log(f"💾 Done! Successfully organized {moved_count} file(s). Saved to Undo history.")
+            self.root.after(0, self._clear_plan_table)
+            self.root.after(0, lambda: messagebox.showinfo("Complete", f"Successfully organized {moved_count} file(s)!"))
+        else:
+            self.log("ℹ️ No files were moved.")
 
     def _save_undo_history(self, moves):
         try:
@@ -411,10 +569,10 @@ class SmartOrganizerApp:
         except Exception as e:
             self.log(f"⚠️ Could not save undo history: {e}")
 
-    # --- Safety Feature: Undo Last Run ---
+    # --- Safety Undo ---
     def undo_last_run(self):
         if self.is_running:
-            messagebox.showinfo("Busy", "Cannot undo while an organizing job is running.")
+            messagebox.showinfo("Busy", "Cannot undo while organizer is active.")
             return
 
         if not os.path.exists(UNDO_FILE):
@@ -447,11 +605,12 @@ class SmartOrganizerApp:
 
         os.remove(UNDO_FILE)
         self.log(f"✅ Undo complete! Restored {restored_count} file(s).")
-        messagebox.showinfo("Undo Complete", f"Successfully restored {restored_count} file(s) to their original locations.")
+        messagebox.showinfo("Undo Complete", f"Successfully restored {restored_count} file(s) to original locations.")
 
     def _finish_agent_run(self):
         self.is_running = False
-        self.root.after(0, lambda: self.run_btn.config(state=tk.NORMAL))
+        self.root.after(0, lambda: self.preview_btn.config(state=tk.NORMAL))
+        self.root.after(0, lambda: self.instant_btn.config(state=tk.NORMAL))
         if self.watcher_enabled.get():
             sec = self.watcher_interval.get()
             self.set_status(f"🟢 Watching ({sec}s)", "#2e7d32")
@@ -460,7 +619,7 @@ class SmartOrganizerApp:
 
 def main():
     root = tk.Tk()
-    app = SmartOrganizerApp(root)
+    app = AdvancedOrganizerApp(root)
     root.mainloop()
 
 if __name__ == "__main__":

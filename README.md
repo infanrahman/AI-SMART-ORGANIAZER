@@ -1,17 +1,21 @@
-# 🗂️ AI Smart Organizer (Local Agentic AI)
+# 🧠 AI Smart Organizer v2.0 (Content-Aware Agentic AI)
 
-An intelligent, 100% private, local file organization tool powered by **Ollama** and **Meta's Llama 3.1**. It combines a clean desktop GUI with an automated background watcher daemon and a one-click undo rollback mechanism.
+An intelligent, 100% private, local file organization system powered by **Ollama**, **Meta's Llama 3.1**, and **pypdf**. It reads inside your documents and code, follows natural language custom instructions, provides a visual plan review table before touching files, and includes an automated background watcher daemon.
 
 ---
 
-## ✨ Features
+## ✨ What's New in v2.0
 
-- **🔒 100% Local & Private:** Runs entirely on your own computer using Ollama and Llama 3.1. Zero API costs, zero data sent to external servers.
-- **⚡ High-Performance Batch Categorization:** Employs an agentic ReAct loop that plans and categorizes entire folders in batches, organizing dozens of files in seconds.
-- **🖥️ Desktop GUI (Option A):** Includes a native folder picker so you can organize any folder (Downloads, Desktop, etc.) on demand.
-- **🕒 Background Auto-Cleaner Daemon (Option C):** An automatic background watcher thread that monitors your chosen directory and auto-organizes newly downloaded files at custom intervals.
-- **↩️ One-Click Undo Rollback:** Keeps a local manifest of all moves so you can reverse the organization with a single click.
-- **🛡️ Defensive AI Engineering:** Built-in smart routing and fallback JSON extractors to safeguard against LLM hallucinations and argument formatting inconsistencies.
+- **🔍 Deep Content Inspection:** The agent doesn't just read filenames anymore. It opens and reads the text inside `.pdf`, `.txt`, `.py`, `.json`, `.csv`, `.md`, `.log`, and `.html` files to understand what the document is actually about (e.g. distinguishing an Invoice from a Tax Form, Recipe, or Code project).
+- **💬 Custom Natural Language Instructions:** A dedicated prompt bar in the GUI. You can type instructions like:
+  > *"Put all tax files in Taxes, cooking recipes in Personal/Recipes, and Discord bots in Dev/Bots."*  
+  The agent dynamically adapts its entire folder tree to your instructions!
+- **📋 Visual Plan Review Table (Dry-Run Mode):**
+  - Click **"🔍 1. Preview Plan"** to inspect a neat table displaying every file, its proposed category, and the AI's content-detected reasoning.
+  - Click **"✅ 2. Approve & Move"** only when you are satisfied with the proposed plan.
+- **⚡ Instant Mode & Background Auto-Cleaner:** Prefer automation? Click **"⚡ Instant Organize"** or enable **"Auto-Watch"** to let the background daemon clean your folders automatically.
+- **↩️ One-Click Undo Rollback:** Reverses all moves and restores original paths if needed.
+- **🔒 100% Local & Private:** Zero API costs, zero data sent to external servers.
 
 ---
 
@@ -19,56 +23,45 @@ An intelligent, 100% private, local file organization tool powered by **Ollama**
 
 ### 1. Prerequisites
 - **Python 3.10+**
-- **[Ollama](https://ollama.com/)** installed and running on your system.
-- Download the Llama 3.1 model:
+- **[Ollama](https://ollama.com/)** running with `llama3.1`:
   ```powershell
   ollama run llama3.1
   ```
-  *(Type `/bye` to exit the chat prompt once the download completes)*
 
 ### 2. Installation
-Clone this repository and install dependencies:
 ```powershell
 git clone https://github.com/infanrahman/AI-SMART-ORGANIAZER.git
 cd AI-SMART-ORGANIAZER
 pip install -r requirements.txt
 ```
 
-### 3. Running the Desktop Application
-To launch the full desktop app with GUI, background watcher, and undo controls:
+### 3. Launch the Application
 ```powershell
 python app.py
 ```
 
-### 4. Running the CLI Script (Optional)
-To run the terminal-based organizer:
-```powershell
-python organizer.py
-```
-
 ---
 
-## 🛠️ Architecture
+## 🛠️ Architecture Flow
 
 ```
-User Action (GUI or Watcher Daemon)
-               │
-               ▼
-      Directory Pre-Scan (Python)
-               │
-               ▼
-     Llama 3.1 Prompting (Ollama)
-               │
-               ▼
-         Agent Reasoning
- (Decides categories: Documents, Images, etc.)
-               │
-               ▼
-     Tool Execution (Smart Router)
-               │
-        ┌──────┴──────┐
-        ▼             ▼
-   Batch Moves     Undo Log
+   Target Directory
+         │
+         ▼
+ 🔍 Content Extractor (PDFs, Code, Text)
+         │
+         ▼
+ 🧠 Ollama (Llama 3.1) + Custom User Rules
+         │
+         ▼
+ 📋 Plan Generator (Category + Reason)
+         │
+  ┌──────┴──────────────┐
+  ▼                     ▼
+Dry-Run Table     Instant / Auto-Watch
+  │                     │
+  ▼                     ▼
+User Approval ────▶ Batch Move & Undo Log
 ```
 
 ---
